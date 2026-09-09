@@ -1,6 +1,7 @@
 import { PROVIDERS_DOCS_URL } from "@workspace/config/constants";
 import { anthropicApi } from "./registry/anthropic-api";
 import { brightdata } from "./registry/brightdata";
+import { cdpCapture } from "./registry/cdp-capture";
 import { cloro } from "./registry/cloro";
 import { dataforseo } from "./registry/dataforseo";
 import { mistralApi } from "./registry/mistral-api";
@@ -27,6 +28,7 @@ export type {
 const providerMap: Record<string, Provider> = {
 	olostep,
 	brightdata,
+	"cdp-capture": cdpCapture,
 	oxylabs,
 	cloro,
 	"openai-api": openaiApi,
