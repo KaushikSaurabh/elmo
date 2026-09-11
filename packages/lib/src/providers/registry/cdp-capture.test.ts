@@ -1,5 +1,5 @@
 import { localBrowser, Stagehand } from "@browserbasehq/stagehand";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cdpCapture } from "./cdp-capture";
 
 vi.mock("@browserbasehq/stagehand", () => {
@@ -116,6 +116,122 @@ describe("cdpCapture", () => {
 
 	it("run throws clear error for unsupported model", async () => {
 		await expect(cdpCapture.run("unknown", "prompt")).rejects.toThrow(/CDP Capture: unsupported model "unknown"/);
+	});
+
+	describe("locale environment variables", () => {
+		let originalGl: string | undefined;
+		let originalHl: string | undefined;
+
+		beforeEach(() => {
+			originalGl = process.env.CDP_CAPTURE_GL;
+			originalHl = process.env.CDP_CAPTURE_HL;
+		});
+
+		afterEach(() => {
+			if (originalGl === undefined) {
+				delete process.env.CDP_CAPTURE_GL;
+			} else {
+				process.env.CDP_CAPTURE_GL = originalGl;
+			}
+			if (originalHl === undefined) {
+				delete process.env.CDP_CAPTURE_HL;
+			} else {
+				process.env.CDP_CAPTURE_HL = originalHl;
+			}
+		});
+
+		const setupMock = () => {
+			const activePageMock = {
+				goto: vi.fn().mockResolvedValue(undefined),
+				evaluate: vi.fn().mockImplementation((fn) => {
+					const fnString = fn.toString();
+					if (fnString.includes("querySelectorAll")) return Promise.resolve([]);
+					if (fnString.includes("is responding")) return Promise.resolve(false);
+					return Promise.resolve("Text");
+				}),
+			};
+			const browserMock = {
+				context: { activePage: vi.fn().mockResolvedValue(activePageMock) },
+			};
+			// biome-ignore lint/suspicious/noExplicitAny: mock
+			vi.mocked(localBrowser.connect).mockResolvedValueOnce(browserMock as any);
+			const stagehandMock = {
+				browser: browserMock,
+				act: vi.fn().mockResolvedValue({}),
+				extract: vi.fn().mockResolvedValue({ data: { textContent: "Text" } }),
+				close: vi.fn().mockResolvedValue(undefined),
+			};
+			// biome-ignore lint/suspicious/noExplicitAny: mock
+			vi.mocked(Stagehand.create).mockResolvedValueOnce(stagehandMock as any);
+			return activePageMock;
+		};
+
+		it("google-ai-mode gets &gl=IN&hl=en appended when both env vars are set", async () => {
+			process.env.CDP_CAPTURE_GL = "IN";
+			process.env.CDP_CAPTURE_HL = "en";
+			const activePageMock = setupMock();
+
+			vi.useFakeTimers();
+			const runPromise = cdpCapture.run("google-ai-mode", "prompt");
+			await vi.runAllTimersAsync();
+			await runPromise;
+			vi.useRealTimers();
+
+			expect(activePageMock.goto).toHaveBeenCalledWith(
+				"https://www.google.com/search?udm=50&aep=11&atvm=2&gl=IN&hl=en",
+			);
+		});
+
+		it("google-ai-mode gets only &gl=IN appended when only CDP_CAPTURE_GL is set", async () => {
+			process.env.CDP_CAPTURE_GL = "IN";
+			delete process.env.CDP_CAPTURE_HL;
+			const activePageMock = setupMock();
+
+			vi.useFakeTimers();
+			const runPromise = cdpCapture.run("google-ai-mode", "prompt");
+			await vi.runAllTimersAsync();
+			await runPromise;
+			vi.useRealTimers();
+
+			expect(activePageMock.goto).toHaveBeenCalledWith("https://www.google.com/search?udm=50&aep=11&atvm=2&gl=IN");
+		});
+
+		it("google-ai-mode URL is unmodified when neither is set", async () => {
+			delete process.env.CDP_CAPTURE_GL;
+			delete process.env.CDP_CAPTURE_HL;
+			const activePageMock = setupMock();
+
+			vi.useFakeTimers();
+			const runPromise = cdpCapture.run("google-ai-mode", "prompt");
+			await vi.runAllTimersAsync();
+			await runPromise;
+			vi.useRealTimers();
+
+			expect(activePageMock.goto).toHaveBeenCalledWith("https://www.google.com/search?udm=50&aep=11&atvm=2");
+		});
+
+		it("chatgpt, claude, and perplexity URLs are completely unaffected by CDP_CAPTURE_GL/HL being set", async () => {
+			process.env.CDP_CAPTURE_GL = "IN";
+			process.env.CDP_CAPTURE_HL = "en";
+
+			for (const model of ["chatgpt", "claude", "perplexity"]) {
+				const activePageMock = setupMock();
+
+				vi.useFakeTimers();
+				const runPromise = cdpCapture.run(model, "prompt");
+				await vi.runAllTimersAsync();
+				await runPromise;
+				vi.useRealTimers();
+
+				const expectedUrl = {
+					chatgpt: "https://chatgpt.com",
+					claude: "https://claude.ai",
+					perplexity: "https://www.perplexity.ai",
+				}[model as keyof typeof expectedUrl];
+
+				expect(activePageMock.goto).toHaveBeenCalledWith(expectedUrl);
+			}
+		});
 	});
 
 	it("webQueries degrades correctly when no citations are found", async () => {
