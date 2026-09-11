@@ -13,6 +13,9 @@ import type { ModelConfig, Provider, ProviderOptions, ScrapeResult } from "../ty
 // provider in this repo, which are all pure API calls with no such dependency.
 
 const TARGET_URLS: Record<string, string> = {
+	// Locale is not controllable via URL for chatgpt, claude, and perplexity.
+	// It is account/session-based. Setting CDP_CAPTURE_GL or CDP_CAPTURE_HL
+	// has no effect on these targets.
 	chatgpt: "https://chatgpt.com",
 	claude: "https://claude.ai",
 	perplexity: "https://www.perplexity.ai",
@@ -101,9 +104,18 @@ export const cdpCapture: Provider = {
 	},
 
 	async run(model: string, prompt: string, options?: ProviderOptions): Promise<ScrapeResult> {
-		const targetUrl = TARGET_URLS[model];
+		let targetUrl = TARGET_URLS[model];
 		if (!targetUrl) {
 			throw new Error(`CDP Capture: unsupported model "${model}". Supported: ${Object.keys(TARGET_URLS).join(", ")}`);
+		}
+
+		if (model === "google-ai-mode") {
+			if (process.env.CDP_CAPTURE_GL) {
+				targetUrl += `&gl=${process.env.CDP_CAPTURE_GL}`;
+			}
+			if (process.env.CDP_CAPTURE_HL) {
+				targetUrl += `&hl=${process.env.CDP_CAPTURE_HL}`;
+			}
 		}
 
 		let browser: StagehandBrowser;
