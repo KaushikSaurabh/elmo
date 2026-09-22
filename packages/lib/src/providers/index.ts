@@ -1,23 +1,7 @@
 import { PROVIDERS_DOCS_URL } from "@workspace/config/constants";
 import { anthropicApi } from "./registry/anthropic-api";
 import { brightdata } from "./registry/brightdata";
-// DISABLED 2026-09-22: @browserbasehq/stagehand hits an unresolved tsx
-// resolveTsPaths bug (ERR_PACKAGE_PATH_NOT_EXPORTED) that crashes the whole
-// worker process on import, confirmed on both Node 22 and 24. cdp-capture
-// (and Claude tracking, which has no other provider) is unavailable until
-// cdp-capture.ts is rewritten to use raw Playwright instead of Stagehand,
-// or the upstream tsx bug is fixed. See github.com/privatenumber/tsx issues.
-import type { Provider } from "./types";
-const cdpCapture: Provider = {
-	id: "cdp-capture",
-	name: "CDP Capture (disabled)",
-	access: "scraped",
-	isConfigured: () => false,
-	validateTarget: () => "cdp-capture is temporarily disabled - see comment above",
-	async run() {
-		throw new Error("cdp-capture is temporarily disabled - see comment above");
-	},
-};
+import { cdpCapture } from "./registry/cdp-capture";
 import { cloro } from "./registry/cloro";
 import { dataforseo } from "./registry/dataforseo";
 import { geminiApi } from "./registry/gemini-api";

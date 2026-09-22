@@ -1,5 +1,4 @@
-import { localBrowser, Stagehand, type StagehandBrowser } from "@browserbasehq/stagehand";
-import { z } from "zod";
+import { chromium, type Page, type Browser } from "playwright";
 import type { Citation } from "../../text-extraction";
 import { reportedWebQueries } from "../config";
 import type { ModelConfig, Provider, ProviderOptions, ScrapeResult } from "../types";
@@ -22,40 +21,139 @@ const TARGET_URLS: Record<string, string> = {
 	"google-ai-mode": "https://www.google.com/search?udm=50&aep=11&atvm=2",
 };
 
-async function waitForStabilization(stagehand: Stagehand): Promise<void> {
+const CONSENT_SELECTORS = [
+	'button:has-text("Accept all")',
+	'button:has-text("Accept All Cookies")',
+	'button:has-text("Reject All Cookies")',
+	'button:has-text("I agree")',
+	'button:has-text("Got it")',
+	'button:has-text("Dismiss")',
+	'button:has-text("Stay logged out")',
+];
+
+async function dismissPopups(page: Page) {
+	for (const selector of CONSENT_SELECTORS) {
+		try {
+			const locator = page.locator(selector).first();
+			if (await locator.isVisible({ timeout: 500 })) {
+				await locator.click({ timeout: 1000 }).catch(() => {});
+			}
+		} catch {
+			// ignore failures
+		}
+	}
+}
+
+const INPUT_SELECTORS: Record<string, string> = {
+	chatgpt: '#prompt-textarea, div[contenteditable="true"], textarea',
+	claude: 'div[contenteditable="true"], textarea, [role="textbox"]',
+	perplexity: 'textarea, div[contenteditable="true"]',
+	"google-ai-mode": 'textarea, input[type="text"]',
+};
+
+async function typePrompt(page: Page, model: string, prompt: string) {
+	const selectors = INPUT_SELECTORS[model] || 'textarea, div[contenteditable="true"]';
+	let inputLocator = null;
+
+	// Wait for an input to be visible
+	try {
+		await Promise.race([
+			page.waitForSelector(selectors, { state: "visible", timeout: 8000 }),
+			new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout waiting for input")), 8000))
+		]);
+
+		inputLocator = page.locator(selectors).first();
+	} catch (e) {
+		throw new Error(`Timeout or error finding input field for ${model}: ${e instanceof Error ? e.message : String(e)}`);
+	}
+
+	try {
+		await inputLocator.click({ timeout: 2000, force: true });
+	} catch {
+		await inputLocator.evaluate((el) => {
+			if (el instanceof HTMLElement) el.focus();
+		}).catch(() => {});
+	}
+
+	await page.keyboard.type(prompt, { delay: 6 });
+	await page.keyboard.press("Enter");
+}
+
+async function waitForStabilization(page: Page, model: string): Promise<string> {
 	let previousLength = 0;
 	let stableCount = 0;
 
-	for (let i = 0; i < 60; i++) {
-		await new Promise((resolve) => setTimeout(resolve, 2000));
+	const maxTicks = model === "claude" ? 40 : 20;
 
-		const page = await stagehand.browser.context.activePage();
-		if (!page) break;
+	// Phase 1: Wait for inFlight text to appear or prompt to be echoed back
+	let started = false;
+	for (let i = 0; i < maxTicks; i++) {
+		await new Promise(resolve => setTimeout(resolve, 1500));
 
-		const isThinking = await page.evaluate(() => {
-			const text = document.body.innerText.toLowerCase();
-			return text.includes("is responding") || text.includes("thinking") || text.includes("generating");
-		});
+		const text = await page.evaluate(() => document.body.innerText);
+		const lowerText = text.toLowerCase();
 
-		const currentText = await page.evaluate(() => document.body.innerText);
-		const textLength = typeof currentText === "string" ? currentText.length : 0;
+		const isThinking = lowerText.includes("is responding") ||
+			lowerText.includes("want to be notified when claude responds") ||
+			lowerText.includes("stop response") ||
+			lowerText.includes("thinking") ||
+			/is (?:searching|pondering|mulling|musing|sleuthing|generating|analyzing)/i.test(lowerText);
 
-		if (!isThinking && textLength === previousLength && textLength > 0) {
+		if (isThinking || text.length > previousLength + 10) {
+			started = true;
+			break;
+		}
+		previousLength = text.length;
+	}
+
+	if (!started) {
+		// Even if not "started" by our heuristic, proceed to phase 2 just in case it was fast
+	}
+
+	previousLength = 0;
+	stableCount = 0;
+
+	const phase2Ticks = model === "claude" ? 60 : 40;
+
+	for (let i = 0; i < phase2Ticks; i++) {
+		await new Promise(resolve => setTimeout(resolve, 1500));
+
+		const text = await page.evaluate(() => document.body.innerText);
+		const lowerText = text.toLowerCase();
+
+		// Rate limit detection
+		if (
+			lowerText.includes("usage limit reached") ||
+			lowerText.includes("you've reached the current usage cap") ||
+			lowerText.includes("rate limit") ||
+			lowerText.includes("too many requests")
+		) {
+			throw new Error("RATE_LIMITED: Detected rate limit or quota message.");
+		}
+
+		const isThinking = lowerText.includes("is responding") ||
+			lowerText.includes("want to be notified when claude responds") ||
+			lowerText.includes("stop response") ||
+			lowerText.includes("thinking") ||
+			/is (?:searching|pondering|mulling|musing|sleuthing|generating|analyzing)/i.test(lowerText);
+
+		const textLength = text.length;
+
+		if (!isThinking && Math.abs(textLength - previousLength) < 25 && textLength > 50) {
 			stableCount++;
 			if (stableCount >= 3) {
-				break;
+				return "stable";
 			}
 		} else {
 			stableCount = 0;
 		}
 		previousLength = textLength;
 	}
+
+	return "timeout";
 }
 
-async function extractCitations(stagehand: Stagehand): Promise<Citation[]> {
-	const page = await stagehand.browser.context.activePage();
-	if (!page) return [];
-
+async function extractCitations(page: Page): Promise<Citation[]> {
 	const extractedLinks = (await page.evaluate(() => {
 		const links = Array.from(document.querySelectorAll("a"));
 		return links.map((a) => ({ url: a.href, text: a.innerText })).filter((l) => l.url?.startsWith("http"));
@@ -118,34 +216,46 @@ export const cdpCapture: Provider = {
 			}
 		}
 
-		let browser: StagehandBrowser;
+		let browser: Browser;
 		try {
-			browser = await localBrowser.connect({
-				cdpUrl: process.env.CDP_CAPTURE_URL ?? "http://127.0.0.1:9222",
-			});
+			browser = await chromium.connectOverCDP(process.env.CDP_CAPTURE_URL ?? "http://127.0.0.1:9222");
 		} catch (error) {
 			throw new Error(
 				`CDP Capture: Failed to connect to CDP at ${process.env.CDP_CAPTURE_URL ?? "http://127.0.0.1:9222"}. Make sure Chrome is running with --remote-debugging-port=9222. Error: ${error instanceof Error ? error.message : String(error)}`,
 			);
 		}
 
-		const stagehand = await Stagehand.create({ browser });
-
 		try {
-			const page = await stagehand.browser.context.activePage();
-			if (!page) throw new Error("CDP Capture: No active page available.");
+			const contexts = browser.contexts();
+			const context = contexts.length > 0 ? contexts[0] : await browser.newContext();
+			const pages = context.pages();
+			const page = pages.length > 0 ? pages[0] : await context.newPage();
 
 			await page.goto(targetUrl);
-			await stagehand.act(`type the prompt "${prompt}" into the message box and press enter`);
-			await waitForStabilization(stagehand);
 
-			const { data } = await stagehand.extract(
-				"extract the main AI response text from the page",
-				z.object({ textContent: z.string() }),
-			);
-			const textContent = data.textContent;
+			await dismissPopups(page);
+			await typePrompt(page, model, prompt);
 
-			const citations = await extractCitations(stagehand);
+			const waitResult = await waitForStabilization(page, model);
+			if (waitResult === "timeout") {
+				// We still extract even on timeout, it might be partial.
+			}
+
+			if (model === "google-ai-mode") {
+				try {
+					const showMoreBtn = page.getByRole('button', { name: /show more/i }).first();
+					if (await showMoreBtn.isVisible({ timeout: 2000 })) {
+						await showMoreBtn.click({ timeout: 2000 }).catch(() => {});
+					}
+				} catch {
+					// Ignore failure
+				}
+			}
+
+			const containerSelector = model === "chatgpt" ? "main" : "body";
+			const textContent = await page.locator(containerSelector).first().innerText().catch(() => "");
+
+			const citations = await extractCitations(page);
 
 			return {
 				textContent,
@@ -158,7 +268,7 @@ export const cdpCapture: Provider = {
 				modelVersion: undefined,
 			};
 		} finally {
-			await stagehand.close();
+			await browser.close().catch(() => {});
 		}
 	},
 };

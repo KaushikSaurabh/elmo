@@ -23,7 +23,7 @@ async function geminiPost(model: string, body: object): Promise<any> {
 	const res = await fetch(`${GEMINI_BASE_URL}/models/${model}:generateContent`, {
 		method: "POST",
 		headers: {
-			"x-goog-api-key": getCredential("GEMINI_API_KEY"),
+			"x-goog-api-key": getCredential("GEMINI_API_KEY") || "",
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify(body),
