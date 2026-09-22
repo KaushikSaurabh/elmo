@@ -6,7 +6,8 @@
 				"anthropic.claude-code",
 				"ms-azuretools.vscode-containers",
 				"biomejs.biome",
-				"eamodio.gitlens"
+				"eamodio.gitlens",
+				"DavidAnson.vscode-markdownlint"
 			]
 		}
 	}
