@@ -104,14 +104,11 @@ describe("cdpCapture", () => {
 		expect(mockPage.goto).toHaveBeenCalledWith("https://chatgpt.com");
 
 		expect(mockPage.waitForSelector).toHaveBeenCalledWith(
-			expect.stringContaining('#prompt-textarea'),
-			expect.any(Object)
+			expect.stringContaining("#prompt-textarea"),
+			expect.any(Object),
 		);
 
-		expect(mockPage.keyboard.type).toHaveBeenCalledWith(
-			"What is the meaning of life?",
-			{ delay: 6 }
-		);
+		expect(mockPage.keyboard.type).toHaveBeenCalledWith("What is the meaning of life?", { delay: 6 });
 		expect(mockPage.keyboard.press).toHaveBeenCalledWith("Enter");
 
 		expect(result.textContent).toBe("Mock response text");
@@ -174,9 +171,7 @@ describe("cdpCapture", () => {
 			await runPromise;
 			vi.useRealTimers();
 
-			expect(mockPage.goto).toHaveBeenCalledWith(
-				"https://www.google.com/search?udm=50&aep=11&atvm=2&gl=IN&hl=en",
-			);
+			expect(mockPage.goto).toHaveBeenCalledWith("https://www.google.com/search?udm=50&aep=11&atvm=2&gl=IN&hl=en");
 		});
 
 		it("google-ai-mode gets only &gl=IN appended when only CDP_CAPTURE_GL is set", async () => {

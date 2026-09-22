@@ -1,4 +1,4 @@
-import { chromium, type Page, type Browser } from "playwright";
+import { type Browser, chromium, type Page } from "playwright";
 import type { Citation } from "../../text-extraction";
 import { reportedWebQueries } from "../config";
 import type { ModelConfig, Provider, ProviderOptions, ScrapeResult } from "../types";
@@ -59,7 +59,7 @@ async function typePrompt(page: Page, model: string, prompt: string) {
 	try {
 		await Promise.race([
 			page.waitForSelector(selectors, { state: "visible", timeout: 8000 }),
-			new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout waiting for input")), 8000))
+			new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout waiting for input")), 8000)),
 		]);
 
 		inputLocator = page.locator(selectors).first();
@@ -70,87 +70,77 @@ async function typePrompt(page: Page, model: string, prompt: string) {
 	try {
 		await inputLocator.click({ timeout: 2000, force: true });
 	} catch {
-		await inputLocator.evaluate((el) => {
-			if (el instanceof HTMLElement) el.focus();
-		}).catch(() => {});
+		await inputLocator
+			.evaluate((el) => {
+				if (el instanceof HTMLElement) el.focus();
+			})
+			.catch(() => {});
 	}
 
 	await page.keyboard.type(prompt, { delay: 6 });
 	await page.keyboard.press("Enter");
 }
 
-async function waitForStabilization(page: Page, model: string): Promise<string> {
+function isInFlightText(lowerText: string): boolean {
+	return (
+		lowerText.includes("is responding") ||
+		lowerText.includes("want to be notified when claude responds") ||
+		lowerText.includes("stop response") ||
+		lowerText.includes("thinking") ||
+		/is (?:searching|pondering|mulling|musing|sleuthing|generating|analyzing)/i.test(lowerText)
+	);
+}
+
+function isRateLimitedText(lowerText: string): boolean {
+	return (
+		lowerText.includes("usage limit reached") ||
+		lowerText.includes("you've reached the current usage cap") ||
+		lowerText.includes("rate limit") ||
+		lowerText.includes("too many requests")
+	);
+}
+
+// Phase 1: wait until generation has actually started (an in-flight marker
+// appears, or the page grows) so phase 2 doesn't measure the pre-send page.
+async function waitForResponseStart(page: Page, maxTicks: number): Promise<void> {
 	let previousLength = 0;
-	let stableCount = 0;
-
-	const maxTicks = model === "claude" ? 40 : 20;
-
-	// Phase 1: Wait for inFlight text to appear or prompt to be echoed back
-	let started = false;
 	for (let i = 0; i < maxTicks; i++) {
-		await new Promise(resolve => setTimeout(resolve, 1500));
-
+		await new Promise((resolve) => setTimeout(resolve, 1500));
 		const text = await page.evaluate(() => document.body.innerText);
-		const lowerText = text.toLowerCase();
-
-		const isThinking = lowerText.includes("is responding") ||
-			lowerText.includes("want to be notified when claude responds") ||
-			lowerText.includes("stop response") ||
-			lowerText.includes("thinking") ||
-			/is (?:searching|pondering|mulling|musing|sleuthing|generating|analyzing)/i.test(lowerText);
-
-		if (isThinking || text.length > previousLength + 10) {
-			started = true;
-			break;
-		}
+		if (isInFlightText(text.toLowerCase()) || text.length > previousLength + 10) return;
 		previousLength = text.length;
 	}
+}
 
-	if (!started) {
-		// Even if not "started" by our heuristic, proceed to phase 2 just in case it was fast
-	}
-
-	previousLength = 0;
-	stableCount = 0;
-
-	const phase2Ticks = model === "claude" ? 60 : 40;
-
-	for (let i = 0; i < phase2Ticks; i++) {
-		await new Promise(resolve => setTimeout(resolve, 1500));
-
+// Phase 2: wait until in-flight markers clear and the answer text has been
+// stable for 3 consecutive ticks.
+async function waitForResponseStable(page: Page, maxTicks: number): Promise<"stable" | "timeout"> {
+	let previousLength = 0;
+	let stableCount = 0;
+	for (let i = 0; i < maxTicks; i++) {
+		await new Promise((resolve) => setTimeout(resolve, 1500));
 		const text = await page.evaluate(() => document.body.innerText);
 		const lowerText = text.toLowerCase();
 
-		// Rate limit detection
-		if (
-			lowerText.includes("usage limit reached") ||
-			lowerText.includes("you've reached the current usage cap") ||
-			lowerText.includes("rate limit") ||
-			lowerText.includes("too many requests")
-		) {
+		if (isRateLimitedText(lowerText)) {
 			throw new Error("RATE_LIMITED: Detected rate limit or quota message.");
 		}
 
-		const isThinking = lowerText.includes("is responding") ||
-			lowerText.includes("want to be notified when claude responds") ||
-			lowerText.includes("stop response") ||
-			lowerText.includes("thinking") ||
-			/is (?:searching|pondering|mulling|musing|sleuthing|generating|analyzing)/i.test(lowerText);
-
 		const textLength = text.length;
-
-		if (!isThinking && Math.abs(textLength - previousLength) < 25 && textLength > 50) {
+		if (!isInFlightText(lowerText) && Math.abs(textLength - previousLength) < 25 && textLength > 50) {
 			stableCount++;
-			if (stableCount >= 3) {
-				return "stable";
-			}
+			if (stableCount >= 3) return "stable";
 		} else {
 			stableCount = 0;
 		}
 		previousLength = textLength;
 	}
-
 	return "timeout";
+}
+
+async function waitForStabilization(page: Page, model: string): Promise<"stable" | "timeout"> {
+	await waitForResponseStart(page, model === "claude" ? 40 : 20);
+	return waitForResponseStable(page, model === "claude" ? 60 : 40);
 }
 
 async function extractCitations(page: Page): Promise<Citation[]> {
@@ -185,6 +175,60 @@ async function extractCitations(page: Page): Promise<Citation[]> {
 	return citations;
 }
 
+function buildTargetUrl(model: string): string {
+	const targetUrl = TARGET_URLS[model];
+	if (!targetUrl) {
+		throw new Error(`CDP Capture: unsupported model "${model}". Supported: ${Object.keys(TARGET_URLS).join(", ")}`);
+	}
+	if (model !== "google-ai-mode") return targetUrl;
+
+	const params: string[] = [];
+	if (process.env.CDP_CAPTURE_GL) params.push(`gl=${process.env.CDP_CAPTURE_GL}`);
+	if (process.env.CDP_CAPTURE_HL) params.push(`hl=${process.env.CDP_CAPTURE_HL}`);
+	return params.length > 0 ? `${targetUrl}&${params.join("&")}` : targetUrl;
+}
+
+async function connectToDebugChrome(): Promise<Browser> {
+	const cdpUrl = process.env.CDP_CAPTURE_URL ?? "http://127.0.0.1:9222";
+	try {
+		return await chromium.connectOverCDP(cdpUrl);
+	} catch (error) {
+		throw new Error(
+			`CDP Capture: Failed to connect to CDP at ${cdpUrl}. Make sure Chrome is running with --remote-debugging-port=9222. Error: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+}
+
+async function getActivePage(browser: Browser): Promise<Page> {
+	const contexts = browser.contexts();
+	const context = contexts.length > 0 ? contexts[0] : await browser.newContext();
+	const pages = context.pages();
+	return pages.length > 0 ? pages[0] : await context.newPage();
+}
+
+// Google truncates a long AI Overview answer behind a "Show more" button -
+// click it (best-effort) before extracting text, or the full answer is
+// invisible.
+async function expandGoogleAiOverview(page: Page): Promise<void> {
+	try {
+		const showMoreBtn = page.getByRole("button", { name: /show more/i }).first();
+		if (await showMoreBtn.isVisible({ timeout: 2000 })) {
+			await showMoreBtn.click({ timeout: 2000 }).catch(() => {});
+		}
+	} catch {
+		// Ignore failure
+	}
+}
+
+async function extractPageText(page: Page, model: string): Promise<string> {
+	const containerSelector = model === "chatgpt" ? "main" : "body";
+	return page
+		.locator(containerSelector)
+		.first()
+		.innerText()
+		.catch(() => "");
+}
+
 export const cdpCapture: Provider = {
 	id: "cdp-capture",
 	name: "CDP Capture",
@@ -202,59 +246,26 @@ export const cdpCapture: Provider = {
 	},
 
 	async run(model: string, prompt: string, options?: ProviderOptions): Promise<ScrapeResult> {
-		let targetUrl = TARGET_URLS[model];
-		if (!targetUrl) {
-			throw new Error(`CDP Capture: unsupported model "${model}". Supported: ${Object.keys(TARGET_URLS).join(", ")}`);
-		}
-
-		if (model === "google-ai-mode") {
-			if (process.env.CDP_CAPTURE_GL) {
-				targetUrl += `&gl=${process.env.CDP_CAPTURE_GL}`;
-			}
-			if (process.env.CDP_CAPTURE_HL) {
-				targetUrl += `&hl=${process.env.CDP_CAPTURE_HL}`;
-			}
-		}
-
-		let browser: Browser;
-		try {
-			browser = await chromium.connectOverCDP(process.env.CDP_CAPTURE_URL ?? "http://127.0.0.1:9222");
-		} catch (error) {
-			throw new Error(
-				`CDP Capture: Failed to connect to CDP at ${process.env.CDP_CAPTURE_URL ?? "http://127.0.0.1:9222"}. Make sure Chrome is running with --remote-debugging-port=9222. Error: ${error instanceof Error ? error.message : String(error)}`,
-			);
-		}
+		const targetUrl = buildTargetUrl(model);
+		const browser = await connectToDebugChrome();
 
 		try {
-			const contexts = browser.contexts();
-			const context = contexts.length > 0 ? contexts[0] : await browser.newContext();
-			const pages = context.pages();
-			const page = pages.length > 0 ? pages[0] : await context.newPage();
-
+			const page = await getActivePage(browser);
 			await page.goto(targetUrl);
 
 			await dismissPopups(page);
 			await typePrompt(page, model, prompt);
 
-			const waitResult = await waitForStabilization(page, model);
-			if (waitResult === "timeout") {
-				// We still extract even on timeout, it might be partial.
-			}
+			// Result is intentionally unused - we still extract on a "timeout"
+			// (the answer may be genuinely long-running or partially rendered)
+			// rather than fail the whole capture outright.
+			await waitForStabilization(page, model);
 
 			if (model === "google-ai-mode") {
-				try {
-					const showMoreBtn = page.getByRole('button', { name: /show more/i }).first();
-					if (await showMoreBtn.isVisible({ timeout: 2000 })) {
-						await showMoreBtn.click({ timeout: 2000 }).catch(() => {});
-					}
-				} catch {
-					// Ignore failure
-				}
+				await expandGoogleAiOverview(page);
 			}
 
-			const containerSelector = model === "chatgpt" ? "main" : "body";
-			const textContent = await page.locator(containerSelector).first().innerText().catch(() => "");
-
+			const textContent = await extractPageText(page, model);
 			const citations = await extractCitations(page);
 
 			return {
