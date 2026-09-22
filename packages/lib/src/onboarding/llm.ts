@@ -32,13 +32,13 @@ import { getProvider, type Provider, type StructuredResearchResult } from "../pr
  * Exported so the compare-onboarding script reads from the same source as
  * production — keeps the two from drifting.
  */
-export const RESEARCH_PROVIDER_PREFERENCE = ["openai-api", "openrouter", "anthropic-api", "mistral-api"] as const;
+export const RESEARCH_PROVIDER_PREFERENCE = ["openai-api", "openrouter", "anthropic-api", "mistral-api", "gemini-api"] as const;
 
 export type ResearchProviderId = (typeof RESEARCH_PROVIDER_PREFERENCE)[number];
 
 const ONBOARDING_LLM_TARGET_HELP =
 	"Set ONBOARDING_LLM_TARGET (e.g. claude:anthropic-api) " +
-	"or configure ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY / MISTRAL_API_KEY.";
+	"or configure ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY / MISTRAL_API_KEY / GEMINI_API_KEY.";
 
 /**
  * Pick which direct-API provider the onboarding flow should use.
