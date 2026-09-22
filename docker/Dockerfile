@@ -1,4 +1,4 @@
-# Elmo 
+# Elmo
 # Supports: web app (Nitro server) and worker
 
 # Base stage with Node.js
@@ -45,16 +45,17 @@ COPY . .
 # write nothing the others read, so they are separate stages: BuildKit runs
 # them concurrently instead of spending the bundle's minute before starting on
 # the deploys.
-
-# Web application bundle
-FROM builder AS web-build
-
-# Build arguments for VITE_ env vars (baked into client bundle)
-ARG DEPLOYMENT_MODE=local
-ARG VITE_DEPLOYMENT_MODE=${DEPLOYMENT_MODE}
-ENV VITE_DEPLOYMENT_MODE=${VITE_DEPLOYMENT_MODE}
-
-RUN pnpm --filter @workspace/web build
+#
+# Stage ORDER below is deliberate, not incidental: the legacy (non-BuildKit)
+# builder processes every stage appearing before its --target in file order,
+# even ones the target doesn't actually depend on (confirmed via Docker's own
+# docs - BuildKit alone does real dependency-based skipping). worker-deploy/
+# lib-deploy/migrate/worker are ordered before web-build/web specifically so
+# a classic-builder `--target worker` (or migrate) never has to build the
+# unrelated, multi-minute web bundle - only `--target web` pays that cost.
+# If BuildKit ever becomes usable again on every build environment this
+# repo runs in, this ordering stops mattering (BuildKit already skips
+# correctly regardless of position) but is harmless to leave as-is.
 
 # Pruned standalone deployments (only each package's own deps)
 # --legacy: allows deploy without inject-workspace-packages (which breaks Alpine Docker builds)
@@ -63,32 +64,6 @@ RUN pnpm --filter @workspace/worker deploy --legacy /deploy/worker
 
 FROM builder AS lib-deploy
 RUN pnpm --filter @workspace/lib deploy --legacy /deploy/lib
-
-# Runner stage for web app (Nitro)
-FROM base AS web
-WORKDIR /app
-
-ENV NODE_ENV=production
-
-# Create non-root user
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 elmo
-
-# Copy entrypoint script
-COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
-# Copy Nitro output - this is the entire server bundle
-COPY --from=web-build --chown=elmo:nodejs /app/apps/web/.output ./.output
-
-USER elmo
-
-EXPOSE 3000
-ENV PORT=3000
-ENV HOST="0.0.0.0"
-
-ENTRYPOINT ["/entrypoint.sh"]
-CMD ["node", ".output/server/index.mjs"]
 
 # Migration stage — runs drizzle-kit migrate then exits
 FROM base AS migrate
@@ -116,3 +91,39 @@ USER worker
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["npx", "tsx", "src/index.ts"]
+
+# Web application bundle
+FROM builder AS web-build
+
+# Build arguments for VITE_ env vars (baked into client bundle)
+ARG DEPLOYMENT_MODE=local
+ARG VITE_DEPLOYMENT_MODE=${DEPLOYMENT_MODE}
+ENV VITE_DEPLOYMENT_MODE=${VITE_DEPLOYMENT_MODE}
+
+RUN pnpm --filter @workspace/web build
+
+# Runner stage for web app (Nitro)
+FROM base AS web
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+# Create non-root user
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 elmo
+
+# Copy entrypoint script
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Copy Nitro output - this is the entire server bundle
+COPY --from=web-build --chown=elmo:nodejs /app/apps/web/.output ./.output
+
+USER elmo
+
+EXPOSE 3000
+ENV PORT=3000
+ENV HOST="0.0.0.0"
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["node", ".output/server/index.mjs"]
