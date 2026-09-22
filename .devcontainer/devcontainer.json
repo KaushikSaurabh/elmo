@@ -1,0 +1,13 @@
+{
+	"name": "elmo",
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"anthropic.claude-code",
+				"ms-azuretools.vscode-containers",
+				"biomejs.biome",
+				"eamodio.gitlens"
+			]
+		}
+	}
+}
