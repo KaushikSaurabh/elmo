@@ -49,29 +49,21 @@ COPY . .
 # Stage ORDER below is deliberate, not incidental: the legacy (non-BuildKit)
 # builder processes every stage appearing before its --target in file order,
 # even ones the target doesn't actually depend on (confirmed via Docker's own
-# docs - BuildKit alone does real dependency-based skipping). worker-deploy/
-# lib-deploy/migrate/worker are ordered before web-build/web specifically so
-# a classic-builder `--target worker` (or migrate) never has to build the
-# unrelated, multi-minute web bundle - only `--target web` pays that cost.
-# If BuildKit ever becomes usable again on every build environment this
-# repo runs in, this ordering stops mattering (BuildKit already skips
-# correctly regardless of position) but is harmless to leave as-is.
+# docs - BuildKit alone does real dependency-based skipping). Each of
+# worker-deploy+worker, lib-deploy+migrate, and web-build+web is a fully
+# independent pair with no cross-dependency - ordered worker before
+# lib-deploy/migrate before web-build/web so `--target worker` (the one
+# rebuilt most often, and the one most likely to be disk-constrained) never
+# has to build EITHER of the other two pairs, `--target migrate` skips only
+# web-build/web, and `--target web` alone pays the full chain. If BuildKit
+# ever becomes usable again on every build environment this repo runs in,
+# this ordering stops mattering (BuildKit already skips correctly regardless
+# of position) but is harmless to leave as-is.
 
-# Pruned standalone deployments (only each package's own deps)
+# Pruned standalone deployment (only worker's own deps)
 # --legacy: allows deploy without inject-workspace-packages (which breaks Alpine Docker builds)
 FROM builder AS worker-deploy
 RUN pnpm --filter @workspace/worker deploy --legacy /deploy/worker
-
-FROM builder AS lib-deploy
-RUN pnpm --filter @workspace/lib deploy --legacy /deploy/lib
-
-# Migration stage — runs drizzle-kit migrate then exits
-FROM base AS migrate
-WORKDIR /app
-
-COPY --from=lib-deploy /deploy/lib ./
-
-CMD ["npx", "drizzle-kit", "migrate"]
 
 # Worker stage
 FROM base AS worker
@@ -91,6 +83,18 @@ USER worker
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["npx", "tsx", "src/index.ts"]
+
+# Pruned standalone deployment (only lib's own deps)
+FROM builder AS lib-deploy
+RUN pnpm --filter @workspace/lib deploy --legacy /deploy/lib
+
+# Migration stage — runs drizzle-kit migrate then exits
+FROM base AS migrate
+WORKDIR /app
+
+COPY --from=lib-deploy /deploy/lib ./
+
+CMD ["npx", "drizzle-kit", "migrate"]
 
 # Web application bundle
 FROM builder AS web-build
