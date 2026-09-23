@@ -21,6 +21,37 @@ const TARGET_URLS: Record<string, string> = {
 	"google-ai-mode": "https://www.google.com/search?udm=50&aep=11&atvm=2",
 };
 
+// Connecting over CDP attaches to whatever window the human already has open,
+// so its size varies across machines and sessions. Pin the CSS viewport (not
+// the OS window) to a fixed desktop size so every site renders its full
+// desktop layout — below each site's own responsive breakpoint, the sidebar
+// collapses or hides differently, which would silently break the selectors
+// below.
+const FIXED_VIEWPORT = { width: 1440, height: 900 };
+
+// Each site's left navigation panel (conversation history, "New chat", etc.)
+// is real page chrome, not part of the answer — left visible it pads every
+// text extraction with nav noise and lets its links leak into citations (see
+// the chatgpt.com self-link note below). Hidden via a real DOM landmark
+// rather than a screenshot crop so it holds regardless of viewport.
+const SIDEBAR_SELECTORS: Record<string, string> = {
+	chatgpt: "#stage-slideover-sidebar",
+	claude: 'aside[aria-label="Sidebar"]',
+	perplexity: 'nav[aria-label="Main"]',
+};
+
+async function hideSidebar(page: Page, model: string): Promise<void> {
+	const selector = SIDEBAR_SELECTORS[model];
+	if (!selector) return;
+	await page
+		.evaluate((sel) => {
+			for (const el of document.querySelectorAll(sel)) {
+				(el as HTMLElement).style.display = "none";
+			}
+		}, selector)
+		.catch(() => {});
+}
+
 const CONSENT_SELECTORS = [
 	'button:has-text("Accept all")',
 	'button:has-text("Accept All Cookies")',
@@ -44,27 +75,42 @@ async function dismissPopups(page: Page) {
 	}
 }
 
-const INPUT_SELECTORS: Record<string, string> = {
-	chatgpt: '#prompt-textarea, div[contenteditable="true"], textarea',
-	claude: 'div[contenteditable="true"], textarea, [role="textbox"]',
-	perplexity: 'textarea, div[contenteditable="true"]',
-	"google-ai-mode": 'textarea, input[type="text"]',
+// Ordered by preference, not matched as a single combined selector: a page
+// can have more than one element satisfying the union (e.g. ChatGPT ships a
+// hidden textarea literally classed "fallbackTextarea" alongside the real
+// contenteditable editor), and Playwright's `.first()` picks whichever is
+// first in DOM order, not whichever entry looks earliest in this list. Only
+// visibility, checked per candidate, can tell the real input from the decoy.
+const INPUT_SELECTORS: Record<string, string[]> = {
+	chatgpt: ["#prompt-textarea", 'div[contenteditable="true"]', "textarea"],
+	claude: ['div[contenteditable="true"]', "textarea", '[role="textbox"]'],
+	perplexity: ["textarea", 'div[contenteditable="true"]'],
+	"google-ai-mode": ["textarea", 'input[type="text"]'],
 };
 
+async function findVisibleInput(page: Page, selectors: string[]) {
+	for (const selector of selectors) {
+		const candidate = page.locator(selector).first();
+		if (await candidate.isVisible({ timeout: 200 }).catch(() => false)) {
+			return candidate;
+		}
+	}
+	return null;
+}
+
 async function typePrompt(page: Page, model: string, prompt: string) {
-	const selectors = INPUT_SELECTORS[model] || 'textarea, div[contenteditable="true"]';
-	let inputLocator = null;
+	const selectors = INPUT_SELECTORS[model] || ["textarea", 'div[contenteditable="true"]'];
+	const deadline = Date.now() + 8000;
+	let inputLocator: Awaited<ReturnType<typeof findVisibleInput>> = null;
 
-	// Wait for an input to be visible
-	try {
-		await Promise.race([
-			page.waitForSelector(selectors, { state: "visible", timeout: 8000 }),
-			new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout waiting for input")), 8000)),
-		]);
+	while (Date.now() < deadline) {
+		inputLocator = await findVisibleInput(page, selectors);
+		if (inputLocator) break;
+		await page.waitForTimeout(200);
+	}
 
-		inputLocator = page.locator(selectors).first();
-	} catch (e) {
-		throw new Error(`Timeout or error finding input field for ${model}: ${e instanceof Error ? e.message : String(e)}`);
+	if (!inputLocator) {
+		throw new Error(`Timeout finding a visible input field for ${model}`);
 	}
 
 	try {
@@ -157,7 +203,9 @@ async function extractCitations(page: Page): Promise<Citation[]> {
 			const urlObj = new URL(link.url);
 			if (
 				!urlObj.hostname.includes("openai.com") &&
+				!urlObj.hostname.includes("chatgpt.com") &&
 				!urlObj.hostname.includes("claude.ai") &&
+				!urlObj.hostname.includes("anthropic.com") &&
 				!urlObj.hostname.includes("perplexity.ai") &&
 				!urlObj.hostname.includes("google.com")
 			) {
@@ -203,7 +251,9 @@ async function getActivePage(browser: Browser): Promise<Page> {
 	const contexts = browser.contexts();
 	const context = contexts.length > 0 ? contexts[0] : await browser.newContext();
 	const pages = context.pages();
-	return pages.length > 0 ? pages[0] : await context.newPage();
+	const page = pages.length > 0 ? pages[0] : await context.newPage();
+	await page.setViewportSize(FIXED_VIEWPORT).catch(() => {});
+	return page;
 }
 
 // Google truncates a long AI Overview answer behind a "Show more" button -
@@ -254,6 +304,7 @@ export const cdpCapture: Provider = {
 			await page.goto(targetUrl);
 
 			await dismissPopups(page);
+			await hideSidebar(page, model);
 			await typePrompt(page, model, prompt);
 
 			// Result is intentionally unused - we still extract on a "timeout"
