@@ -32,24 +32,29 @@ const FIXED_VIEWPORT = { width: 1440, height: 900 };
 // Each site's left navigation panel (conversation history, "New chat", etc.)
 // is real page chrome, not part of the answer — left visible it pads every
 // text extraction with nav noise and lets its links leak into citations (see
-// the chatgpt.com self-link note below). Hidden via a real DOM landmark
+// the chatgpt.com self-link note below). Hidden via real DOM landmarks
 // rather than a screenshot crop so it holds regardless of viewport.
+//
+// Claude also needs its top bar hidden: unlike ChatGPT (where extraction
+// already scopes to <main>, which excludes the header), Claude's header
+// (.dframe-header, "Free plan / Upgrade / Share") is absolutely positioned
+// *inside* the same <main> as the chat, so scoping to a container can't
+// exclude it — only hiding it can.
 const SIDEBAR_SELECTORS: Record<string, string> = {
 	chatgpt: "#stage-slideover-sidebar",
-	claude: 'aside[aria-label="Sidebar"]',
+	claude: 'aside[aria-label="Sidebar"], .dframe-header',
 	perplexity: 'nav[aria-label="Main"]',
 };
 
 async function hideSidebar(page: Page, model: string): Promise<void> {
 	const selector = SIDEBAR_SELECTORS[model];
 	if (!selector) return;
-	await page
-		.evaluate((sel) => {
-			for (const el of document.querySelectorAll(sel)) {
-				(el as HTMLElement).style.display = "none";
-			}
-		}, selector)
-		.catch(() => {});
+	// A real stylesheet rule, not an inline style mutation: these sites
+	// re-render their header/nav components mid-conversation (title updates,
+	// "Claude finished the response", etc.), and a React re-render silently
+	// drops any inline style we set by hand. A CSS rule survives re-renders
+	// since it isn't part of the component tree React reconciles.
+	await page.addStyleTag({ content: `${selector} { display: none !important; }` }).catch(() => {});
 }
 
 const CONSENT_SELECTORS = [
