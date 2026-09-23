@@ -153,14 +153,20 @@ function isRateLimitedText(lowerText: string): boolean {
 
 // Phase 1: wait until generation has actually started (an in-flight marker
 // appears, or the page grows) so phase 2 doesn't measure the pre-send page.
-async function waitForResponseStart(page: Page, maxTicks: number): Promise<void> {
+// Returns false if nothing happened for the whole budget — observed live: the
+// Enter keypress can silently fail to submit (focus race, a stray keystroke
+// swallowed by the site's own JS) and the page just sits on its empty landing
+// state. Left unchecked, phase 2 would then "stabilize" on that empty state
+// and run() would return it as a normal successful capture.
+async function waitForResponseStart(page: Page, maxTicks: number): Promise<boolean> {
 	let previousLength = 0;
 	for (let i = 0; i < maxTicks; i++) {
 		await new Promise((resolve) => setTimeout(resolve, 1500));
 		const text = await page.evaluate(() => document.body.innerText);
-		if (isInFlightText(text.toLowerCase()) || text.length > previousLength + 10) return;
+		if (isInFlightText(text.toLowerCase()) || text.length > previousLength + 10) return true;
 		previousLength = text.length;
 	}
+	return false;
 }
 
 // Phase 2: wait until in-flight markers clear and the answer text has been
@@ -190,7 +196,12 @@ async function waitForResponseStable(page: Page, maxTicks: number): Promise<"sta
 }
 
 async function waitForStabilization(page: Page, model: string): Promise<"stable" | "timeout"> {
-	await waitForResponseStart(page, model === "claude" ? 40 : 20);
+	const started = await waitForResponseStart(page, model === "claude" ? 40 : 20);
+	if (!started) {
+		throw new Error(
+			`CDP Capture: prompt appears to have never been submitted for ${model} (no response activity detected after typing and Enter)`,
+		);
+	}
 	return waitForResponseStable(page, model === "claude" ? 60 : 40);
 }
 
@@ -212,7 +223,9 @@ async function extractCitations(page: Page): Promise<Citation[]> {
 				!urlObj.hostname.includes("claude.ai") &&
 				!urlObj.hostname.includes("anthropic.com") &&
 				!urlObj.hostname.includes("perplexity.ai") &&
-				!urlObj.hostname.includes("google.com")
+				// Google has a self-link on every country TLD (google.co.in,
+				// google.de, ...), not just google.com.
+				!/(^|\.)google\.[a-z.]{2,}$/i.test(urlObj.hostname)
 			) {
 				citations.push({
 					url: link.url,
