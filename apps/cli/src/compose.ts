@@ -80,6 +80,9 @@ export function buildComposeYaml(options: {
 		}),
 	);
 
+	services.push(buildChromeService());
+	volumes.add("chrome_data");
+
 	const lines = [renderedByHeader(options.version), "", "name: elmo", "", "services:"];
 	lines.push(...services.map((service) => indentBlock(service, 2)));
 
@@ -204,7 +207,13 @@ function buildWorkerService(options: {
 		lines.push(`  image: elmohq/elmo-worker:${options.version}`);
 	}
 
-	lines.push("  env_file:", "    - path: .env", "      required: true");
+	lines.push(
+		"  env_file:",
+		"    - path: .env",
+		"      required: true",
+		"  environment:",
+		"    - CDP_CAPTURE_URL=http://chrome:9222",
+	);
 
 	// On SIGTERM the worker gives pg-boss 30s to finish in-flight jobs, then
 	// flushes telemetry. Compose's 10s default would SIGKILL it partway through
@@ -220,4 +229,23 @@ function buildWorkerService(options: {
 	}
 
 	return lines.join("\n");
+}
+
+function buildChromeService(): string {
+	return [
+		"chrome:",
+		"  image: lscr.io/linuxserver/chromium:latest",
+		"  environment:",
+		"    - PUID=1000",
+		"    - PGID=1000",
+		"    - TZ=Etc/UTC",
+		"    - CHROME_CLI=https://google.com/",
+		"    - CUSTOM_FLAGS=--remote-debugging-port=9222 --remote-debugging-address=0.0.0.0",
+		"  volumes:",
+		"    - chrome_data:/config",
+		"  ports:",
+		'    - "3001:3000"',
+		'    - "3002:3001"',
+		"  restart: unless-stopped",
+	].join("\n");
 }
