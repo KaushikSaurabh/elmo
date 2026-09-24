@@ -29,6 +29,8 @@ interface PromptRunData {
 	version: string;
 	webSearchEnabled: boolean;
 	rawOutput: any;
+	screenshotUrl: string | null;
+	screenshotDataUrl: string | null;
 	webQueries: string[];
 }
 
