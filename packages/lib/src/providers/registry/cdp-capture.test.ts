@@ -107,10 +107,9 @@ describe("cdpCapture", () => {
 		expect(chromium.connectOverCDP).toHaveBeenCalled();
 		expect(mockPage.goto).toHaveBeenCalledWith("https://chatgpt.com");
 
-		expect(mockPage.waitForSelector).toHaveBeenCalledWith(
-			expect.stringContaining("#prompt-textarea"),
-			expect.any(Object),
-		);
+		expect(mockPage.addStyleTag).toHaveBeenCalledWith({
+			content: expect.stringContaining("display: none !important;"),
+		});
 
 		expect(mockPage.keyboard.type).toHaveBeenCalledWith("What is the meaning of life?", { delay: 6 });
 		expect(mockPage.keyboard.press).toHaveBeenCalledWith("Enter");
@@ -232,6 +231,78 @@ describe("cdpCapture", () => {
 
 				expect(mockPage.goto).toHaveBeenCalledWith(expectedUrl);
 			}
+		});
+	});
+
+	describe("hideChrome CSS injection", () => {
+		const setupMock = async () => {
+			const mockBrowser = await chromium.connectOverCDP("");
+			const mockPage = mockBrowser.contexts()[0].pages()[0];
+
+			// biome-ignore lint/suspicious/noExplicitAny: mock
+			(mockPage.evaluate as any).mockImplementation((fn: any) => {
+				const fnString = fn.toString();
+				if (fnString.includes("querySelectorAll")) return Promise.resolve([]);
+				return Promise.resolve("Text ".repeat(20));
+			});
+
+			return mockPage;
+		};
+
+		it("injects hide chrome CSS rule for chatgpt", async () => {
+			const mockPage = await setupMock();
+			vi.useFakeTimers();
+			const runPromise = cdpCapture.run("chatgpt", "prompt");
+			await vi.advanceTimersByTimeAsync(8000);
+			await vi.advanceTimersByTimeAsync(1500 * 60);
+			await runPromise;
+			vi.useRealTimers();
+
+			expect(mockPage.addStyleTag).toHaveBeenCalledWith({
+				content: '#stage-slideover-sidebar, header, #stage-header, [data-testid="profile-button"], [aria-label="Profile"] { display: none !important; }',
+			});
+		});
+
+		it("injects hide chrome CSS rule for claude", async () => {
+			const mockPage = await setupMock();
+			vi.useFakeTimers();
+			const runPromise = cdpCapture.run("claude", "prompt");
+			await vi.advanceTimersByTimeAsync(8000);
+			await vi.advanceTimersByTimeAsync(1500 * 100);
+			await runPromise;
+			vi.useRealTimers();
+
+			expect(mockPage.addStyleTag).toHaveBeenCalledWith({
+				content: 'aside[aria-label="Sidebar"], .dframe-header, header, [aria-label="User menu"], [aria-label="Account menu"] { display: none !important; }',
+			});
+		});
+
+		it("injects hide chrome CSS rule for perplexity", async () => {
+			const mockPage = await setupMock();
+			vi.useFakeTimers();
+			const runPromise = cdpCapture.run("perplexity", "prompt");
+			await vi.advanceTimersByTimeAsync(8000);
+			await vi.advanceTimersByTimeAsync(1500 * 60);
+			await runPromise;
+			vi.useRealTimers();
+
+			expect(mockPage.addStyleTag).toHaveBeenCalledWith({
+				content: 'nav[aria-label="Main"], header, [aria-label="User menu"], [aria-label="Account settings"] { display: none !important; }',
+			});
+		});
+
+		it("injects hide chrome CSS rule for google-ai-mode", async () => {
+			const mockPage = await setupMock();
+			vi.useFakeTimers();
+			const runPromise = cdpCapture.run("google-ai-mode", "prompt");
+			await vi.advanceTimersByTimeAsync(8000);
+			await vi.advanceTimersByTimeAsync(1500 * 60);
+			await runPromise;
+			vi.useRealTimers();
+
+			expect(mockPage.addStyleTag).toHaveBeenCalledWith({
+				content: '#gb, #ogb, #appbar, #top_nav, header, [aria-label*="Google Account"] { display: none !important; }',
+			});
 		});
 	});
 
