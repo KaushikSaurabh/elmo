@@ -1,5 +1,5 @@
-import { getCredential } from "../../secrets";
 import { z } from "zod";
+import { getCredential } from "../../secrets";
 import { configuredWhen } from "../config";
 import type {
 	Provider,

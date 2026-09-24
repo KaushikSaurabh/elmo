@@ -341,8 +341,7 @@ export const ENV_REGISTRY: EnvVarSpec[] = [
 		name: "BLOB_READ_WRITE_TOKEN",
 		scope: "server",
 		requiredBy: "optional",
-		wwwOnly: true,
-		description: "Vercel Blob token (www competitor screenshots).",
+		description: "Vercel Blob token (www competitor screenshots and capture proofs).",
 	},
 	{
 		name: "DBOS_SYSTEM_DATABASE_URL",

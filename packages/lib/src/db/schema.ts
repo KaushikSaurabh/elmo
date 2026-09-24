@@ -120,6 +120,8 @@ export const promptRuns = pgTable(
 		version: text("version").notNull(),
 		webSearchEnabled: boolean("web_search_enabled").notNull(),
 		rawOutput: json("raw_output").notNull(),
+		screenshotUrl: text("screenshot_url"),
+		screenshotDataUrl: text("screenshot_data_url"),
 		webQueries: text("web_queries").array().notNull().default([]),
 		brandMentioned: boolean("brand_mentioned").notNull(),
 		competitorsMentioned: text("competitors_mentioned").array().notNull().default([]),
