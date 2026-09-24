@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/node";
 import { put } from "@vercel/blob";
+import sharp from "sharp";
 import type { Entitlements } from "@workspace/config/entitlements";
 import { parseScrapeTargets } from "@workspace/config/scrape-targets";
 import { getDefaultDelayHours } from "@workspace/lib/constants";
@@ -200,6 +201,16 @@ async function isOrgOverDailyCeiling(organizationId: string, ceiling: number): P
 	return Number(row?.value ?? 0) >= ceiling;
 }
 
+/** Human-readable Blob path segment — not a uniqueness guarantee, the UUID suffix at the call site is. */
+function slugifyPrompt(prompt: string): string {
+	const slug = prompt
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "")
+		.slice(0, 60);
+	return slug || "prompt";
+}
+
 async function savePromptRun(
 	promptId: string,
 	brandId: string,
@@ -211,6 +222,8 @@ async function savePromptRun(
 	webQueries: string[],
 	brandMentioned: boolean,
 	competitorsMentioned: string[],
+	screenshotUrl: string | null,
+	screenshotDataUrl: string | null,
 ): Promise<{ id: string; createdAt: Date }> {
 	const [result] = await db
 		.insert(promptRuns)
@@ -225,6 +238,8 @@ async function savePromptRun(
 			webQueries,
 			brandMentioned,
 			competitorsMentioned,
+			screenshotUrl,
+			screenshotDataUrl,
 		})
 		.returning({ id: promptRuns.id, createdAt: promptRuns.createdAt });
 
@@ -328,20 +343,33 @@ async function runModelIteration({
 
 		const recordedVersion = modelVersion ?? config.version ?? config.provider;
 
-		let finalRawOutput = rawOutput;
+		let screenshotUrl: string | null = null;
+		let screenshotDataUrl: string | null = null;
 		if (screenshot && process.env.BLOB_READ_WRITE_TOKEN) {
 			try {
+				const now = new Date();
+				const dateStr = now.toISOString().split("T")[0];
+				const timeStr = now.toISOString().split("T")[1].replace(/[:.]/g, "-").replace("Z", "");
+				const promptSlug = slugifyPrompt(promptValue);
+				// The UUID suffix keeps the path unguessable (the real access control
+				// for a "public" Blob upload) even though the rest of the path is now
+				// human-readable — don't drop it for readability's sake.
 				const runIdentifier = crypto.randomUUID();
-				const dateStr = new Date().toISOString().split("T")[0];
 
-				const basePath = `${config.model}/${dateStr}/${promptId}_${runIdentifier}`;
-				const blobPath = `${basePath}.png`;
+				const basePath = `${config.model}/${dateStr}/${promptSlug}_${timeStr}_${runIdentifier}`;
+				const blobPath = `${basePath}.webp`;
 				const dataPath = `${basePath}.json`;
 
+				// Lossless WebP, not lossy WebP/AVIF: this screenshot exists for visual
+				// verification of the actual response text, so a compression artifact
+				// that blurs small text would silently defeat the feature's purpose.
+				// Still ~20-30% smaller than PNG for flat UI/text content like this.
+				const webpScreenshot = await sharp(screenshot).webp({ lossless: true }).toBuffer();
+
 				const [blob, dataBlob] = await Promise.all([
-					put(blobPath, screenshot, {
+					put(blobPath, webpScreenshot, {
 						access: "public",
-						contentType: "image/png",
+						contentType: "image/webp",
 						addRandomSuffix: false,
 						token: process.env.BLOB_READ_WRITE_TOKEN,
 					}),
@@ -353,11 +381,8 @@ async function runModelIteration({
 					}),
 				]);
 
-				finalRawOutput = {
-					...(typeof rawOutput === "object" && rawOutput !== null ? rawOutput : { data: rawOutput }),
-					screenshotUrl: blob.url,
-					dataUrl: dataBlob.url,
-				};
+				screenshotUrl = blob.url;
+				screenshotDataUrl = dataBlob.url;
 				// Blob URLs are the access control (public, unguessable path) — never log
 				// them, since that hands out the URL to a wider audience (Sentry,
 				// platform log aggregators) than the blob token itself has.
@@ -374,10 +399,12 @@ async function runModelIteration({
 			config.provider,
 			recordedVersion,
 			config.webSearch,
-			finalRawOutput,
+			rawOutput,
 			webQueries,
 			brandMentioned,
 			competitorsMentioned,
+			screenshotUrl,
+			screenshotDataUrl,
 		);
 		console.log(`${logPrefix} Saved prompt run ${promptRunId}`);
 
