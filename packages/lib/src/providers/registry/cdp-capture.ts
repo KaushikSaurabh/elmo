@@ -29,25 +29,20 @@ const TARGET_URLS: Record<string, string> = {
 // below.
 const FIXED_VIEWPORT = { width: 1440, height: 900 };
 
-// Each site's left navigation panel (conversation history, "New chat", etc.)
-// is real page chrome, not part of the answer — left visible it pads every
-// text extraction with nav noise and lets its links leak into citations (see
-// the chatgpt.com self-link note below). Hidden via real DOM landmarks
-// rather than a screenshot crop so it holds regardless of viewport.
-//
-// Claude also needs its top bar hidden: unlike ChatGPT (where extraction
-// already scopes to <main>, which excludes the header), Claude's header
-// (.dframe-header, "Free plan / Upgrade / Share") is absolutely positioned
-// *inside* the same <main> as the chat, so scoping to a container can't
-// exclude it — only hiding it can.
-const SIDEBAR_SELECTORS: Record<string, string> = {
-	chatgpt: "#stage-slideover-sidebar",
-	claude: 'aside[aria-label="Sidebar"], .dframe-header',
-	perplexity: 'nav[aria-label="Main"]',
+// Each site's navigation panel, top header, account menu, avatar, and plan badges
+// are page chrome, not part of the answer. Left visible, uncropped screenshots
+// can carry sidebar chat titles, account email/avatar, or subscription badges.
+// Hidden via real stylesheet rules rather than inline style mutations (which React
+// re-renders silently revert) or element screenshots so it holds regardless of viewport.
+const CHROME_SELECTORS: Record<string, string> = {
+	chatgpt: '#stage-slideover-sidebar, header, #stage-header, [data-testid="profile-button"], [aria-label="Profile"]',
+	claude: 'aside[aria-label="Sidebar"], .dframe-header, header, [aria-label="User menu"], [aria-label="Account menu"]',
+	perplexity: 'nav[aria-label="Main"], header, [aria-label="User menu"], [aria-label="Account settings"]',
+	"google-ai-mode": '#gb, #ogb, #appbar, #top_nav, header, [aria-label*="Google Account"]',
 };
 
-async function hideSidebar(page: Page, model: string): Promise<void> {
-	const selector = SIDEBAR_SELECTORS[model];
+async function hideChrome(page: Page, model: string): Promise<void> {
+	const selector = CHROME_SELECTORS[model];
 	if (!selector) return;
 	// A real stylesheet rule, not an inline style mutation: these sites
 	// re-render their header/nav components mid-conversation (title updates,
@@ -322,7 +317,7 @@ export const cdpCapture: Provider = {
 			await page.goto(targetUrl);
 
 			await dismissPopups(page);
-			await hideSidebar(page, model);
+			await hideChrome(page, model);
 			await typePrompt(page, model, prompt);
 
 			// Result is intentionally unused - we still extract on a "timeout"
