@@ -41,6 +41,7 @@ declare global {
 	const __APP_VERSION__: string;
 	namespace NodeJS {
 		interface ProcessEnv {
+			readonly ENABLE_SCHEDULED_CDP_CAPTURE?: string;
 			readonly DEPLOYMENT_MODE: string;
 			readonly DATABASE_URL: string;
 			readonly APP_URL?: string;
