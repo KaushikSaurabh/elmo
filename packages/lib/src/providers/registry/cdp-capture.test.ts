@@ -305,7 +305,8 @@ describe("cdpCapture", () => {
 			vi.useRealTimers();
 
 			expect(mockPage.addStyleTag).toHaveBeenCalledWith({
-				content: '#gb, #ogb, #appbar, #top_nav, header, [aria-label*="Google Account"] { display: none !important; }',
+				content:
+					'#gb, #ogb, #appbar, #top_nav, header, [jsname="oEQ3x"], .qEn1od, [aria-label="Settings"], [aria-label="Settings for AI mode history"], [aria-label*="Google Account"] { display: none !important; }',
 			});
 		});
 	});
