@@ -13,6 +13,8 @@ export interface ScrapeResult {
 	webQueries: string[];
 	citations: Citation[];
 	modelVersion?: string;
+	/** Optional full-page screenshot of the response for visual verification. */
+	screenshot?: Buffer;
 }
 
 export interface ProviderOptions {

@@ -32,7 +32,13 @@ import { getProvider, type Provider, type StructuredResearchResult } from "../pr
  * Exported so the compare-onboarding script reads from the same source as
  * production — keeps the two from drifting.
  */
-export const RESEARCH_PROVIDER_PREFERENCE = ["openai-api", "openrouter", "anthropic-api", "mistral-api", "gemini-api"] as const;
+export const RESEARCH_PROVIDER_PREFERENCE = [
+	"openai-api",
+	"openrouter",
+	"anthropic-api",
+	"mistral-api",
+	"gemini-api",
+] as const;
 
 export type ResearchProviderId = (typeof RESEARCH_PROVIDER_PREFERENCE)[number];
 

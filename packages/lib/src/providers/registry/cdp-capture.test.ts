@@ -23,6 +23,10 @@ vi.mock("playwright", () => {
 		waitForSelector: vi.fn().mockResolvedValue(undefined),
 		getByRole: vi.fn().mockReturnValue(locatorMock),
 		keyboard: keyboardMock,
+		screenshot: vi.fn().mockResolvedValue(Buffer.from("mock-screenshot")),
+		setViewportSize: vi.fn().mockResolvedValue(undefined),
+		waitForTimeout: vi.fn().mockResolvedValue(undefined),
+		addStyleTag: vi.fn().mockResolvedValue(undefined),
 	};
 
 	const contextMock = {
@@ -115,6 +119,8 @@ describe("cdpCapture", () => {
 		expect(result.citations).toHaveLength(1);
 		expect(result.citations[0].url).toBe("https://example.com");
 		expect(result.citations[0].domain).toBe("example.com");
+		expect(result.screenshot).toEqual(Buffer.from("mock-screenshot"));
+		expect(mockPage.screenshot).toHaveBeenCalledWith({ fullPage: true });
 
 		expect(mockBrowser.close).toHaveBeenCalled();
 	});

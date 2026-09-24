@@ -337,6 +337,13 @@ export const cdpCapture: Provider = {
 			const textContent = await extractPageText(page, model);
 			const citations = await extractCitations(page);
 
+			let screenshot: Buffer | undefined;
+			try {
+				screenshot = await page.screenshot({ fullPage: true });
+			} catch (err) {
+				console.warn(`CDP Capture: Failed to take screenshot for ${model}`, err);
+			}
+
 			return {
 				textContent,
 				rawOutput: { textContent },
@@ -346,6 +353,7 @@ export const cdpCapture: Provider = {
 				}),
 				citations,
 				modelVersion: undefined,
+				screenshot,
 			};
 		} finally {
 			await browser.close().catch(() => {});

@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/node";
+import { put } from "@vercel/blob";
 import type { Entitlements } from "@workspace/config/entitlements";
 import { parseScrapeTargets } from "@workspace/config/scrape-targets";
 import { getDefaultDelayHours } from "@workspace/lib/constants";
@@ -314,7 +315,7 @@ async function runModelIteration({
 		// fan-out page excludes verbatim repeats at read time as a display rule;
 		// providers whose query field is fabricated (DataForSEO) write the
 		// `unavailable` sentinel in their own extractor instead.
-		const { rawOutput, textContent, webQueries, citations: extractedCitations, modelVersion } = result;
+		const { rawOutput, textContent, webQueries, citations: extractedCitations, modelVersion, screenshot } = result;
 		console.log(`${logPrefix} AI call completed, textContent length: ${textContent?.length ?? "null"}`);
 
 		const safeTextContent = typeof textContent === "string" ? textContent : "";
@@ -327,6 +328,42 @@ async function runModelIteration({
 
 		const recordedVersion = modelVersion ?? config.version ?? config.provider;
 
+		let finalRawOutput = rawOutput;
+		if (screenshot && process.env.BLOB_READ_WRITE_TOKEN) {
+			try {
+				const runIdentifier = crypto.randomUUID();
+				const dateStr = new Date().toISOString().split("T")[0];
+
+				const basePath = `${config.model}/${dateStr}/${promptId}_${runIdentifier}`;
+				const blobPath = `${basePath}.png`;
+				const dataPath = `${basePath}.json`;
+
+				const [blob, dataBlob] = await Promise.all([
+					put(blobPath, screenshot, {
+						access: "public",
+						contentType: "image/png",
+						addRandomSuffix: false,
+						token: process.env.BLOB_READ_WRITE_TOKEN,
+					}),
+					put(dataPath, JSON.stringify({ textContent, citations: extractedCitations }), {
+						access: "public",
+						contentType: "application/json",
+						addRandomSuffix: false,
+						token: process.env.BLOB_READ_WRITE_TOKEN,
+					}),
+				]);
+
+				finalRawOutput = {
+					...(typeof rawOutput === "object" && rawOutput !== null ? rawOutput : { data: rawOutput }),
+					screenshotUrl: blob.url,
+					dataUrl: dataBlob.url,
+				};
+				console.log(`${logPrefix} Uploaded screenshot to ${blob.url} and data to ${dataBlob.url}`);
+			} catch (uploadError) {
+				console.error(`${logPrefix} Failed to upload screenshot and data to Blob storage`, uploadError);
+			}
+		}
+
 		const { id: promptRunId, createdAt } = await savePromptRun(
 			promptId,
 			brand.id,
@@ -334,7 +371,7 @@ async function runModelIteration({
 			config.provider,
 			recordedVersion,
 			config.webSearch,
-			rawOutput,
+			finalRawOutput,
 			webQueries,
 			brandMentioned,
 			competitorsMentioned,
