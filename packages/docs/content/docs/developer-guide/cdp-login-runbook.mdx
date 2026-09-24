@@ -1,0 +1,28 @@
+---
+title: "CDP Login Runbook"
+description: "How to perform the one-time login for CDP captures"
+---
+
+# CDP Login Runbook
+
+To enable automatic data capture for platforms like ChatGPT, Claude, and Perplexity, you must log in to each platform once. The session persists within the Chrome container's `chrome_data` volume.
+
+## Steps to login:
+
+1. **Access the Chrome Interface:**
+   The `linuxserver/chromium` image hosts a visual desktop interface accessible over the web.
+   When your Docker stack is running, navigate to `http://localhost:3001` (or whichever hostname you are exposing for port 3001).
+   This will open a noVNC web interface.
+
+2. **Open the Respective Websites:**
+   In the Chromium window via the noVNC interface, navigate to the target platforms:
+   - ChatGPT: `https://chatgpt.com/`
+   - Claude: `https://claude.ai/`
+   - Perplexity: `https://www.perplexity.ai/`
+
+3. **Log In:**
+   - Complete the login process on each site.
+   - For ease of use, you can log in using a single throwaway Google account using "Sign in with Google" across all the platforms.
+
+4. **Verify Session Persists:**
+   - The login sessions (cookies/local storage) are saved in the persistent `chrome_data` volume. You can close the noVNC tab once you've successfully authenticated on all platforms.

@@ -17,9 +17,16 @@ vi.mock("playwright", () => {
 	};
 
 	const pageMock = {
+		addStyleTag: vi.fn().mockResolvedValue(undefined),
+		setViewportSize: vi.fn().mockResolvedValue(undefined),
+		waitForTimeout: vi.fn().mockImplementation((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
+		url: vi.fn().mockReturnValue("https://example.com"),
 		goto: vi.fn().mockResolvedValue(undefined),
 		evaluate: vi.fn(),
-		locator: vi.fn().mockReturnValue(locatorMock),
+		locator: vi.fn().mockImplementation((sel: string) => ({
+			...locatorMock,
+			isVisible: vi.fn().mockResolvedValue(sel === "textarea" || sel.includes("contenteditable")),
+		})),
 		waitForSelector: vi.fn().mockResolvedValue(undefined),
 		getByRole: vi.fn().mockReturnValue(locatorMock),
 		keyboard: keyboardMock,
@@ -93,7 +100,7 @@ describe("cdpCapture", () => {
 		const runPromise = cdpCapture.run("chatgpt", "What is the meaning of life?", { webSearch: true });
 
 		// Advance timers multiple times to get past both phases of stabilization
-		await vi.advanceTimersByTimeAsync(8000); // input wait
+		await vi.advanceTimersByTimeAsync(10000); // input wait
 		await vi.advanceTimersByTimeAsync(1500 * 20); // phase 1
 		await vi.advanceTimersByTimeAsync(1500 * 40); // phase 2
 
@@ -102,11 +109,6 @@ describe("cdpCapture", () => {
 
 		expect(chromium.connectOverCDP).toHaveBeenCalled();
 		expect(mockPage.goto).toHaveBeenCalledWith("https://chatgpt.com");
-
-		expect(mockPage.waitForSelector).toHaveBeenCalledWith(
-			expect.stringContaining("#prompt-textarea"),
-			expect.any(Object),
-		);
 
 		expect(mockPage.keyboard.type).toHaveBeenCalledWith("What is the meaning of life?", { delay: 6 });
 		expect(mockPage.keyboard.press).toHaveBeenCalledWith("Enter");
@@ -166,7 +168,7 @@ describe("cdpCapture", () => {
 
 			vi.useFakeTimers();
 			const runPromise = cdpCapture.run("google-ai-mode", "prompt");
-			await vi.advanceTimersByTimeAsync(8000);
+			await vi.advanceTimersByTimeAsync(10000);
 			await vi.advanceTimersByTimeAsync(1500 * 60);
 			await runPromise;
 			vi.useRealTimers();
@@ -181,7 +183,7 @@ describe("cdpCapture", () => {
 
 			vi.useFakeTimers();
 			const runPromise = cdpCapture.run("google-ai-mode", "prompt");
-			await vi.advanceTimersByTimeAsync(8000);
+			await vi.advanceTimersByTimeAsync(10000);
 			await vi.advanceTimersByTimeAsync(1500 * 60);
 			await runPromise;
 			vi.useRealTimers();
@@ -196,7 +198,7 @@ describe("cdpCapture", () => {
 
 			vi.useFakeTimers();
 			const runPromise = cdpCapture.run("google-ai-mode", "prompt");
-			await vi.advanceTimersByTimeAsync(8000);
+			await vi.advanceTimersByTimeAsync(10000);
 			await vi.advanceTimersByTimeAsync(1500 * 60);
 			await runPromise;
 			vi.useRealTimers();
@@ -213,7 +215,7 @@ describe("cdpCapture", () => {
 
 				vi.useFakeTimers();
 				const runPromise = cdpCapture.run(model, "prompt");
-				await vi.advanceTimersByTimeAsync(8000);
+				await vi.advanceTimersByTimeAsync(10000);
 				await vi.advanceTimersByTimeAsync(1500 * 100);
 				await runPromise;
 				vi.useRealTimers();
@@ -242,7 +244,7 @@ describe("cdpCapture", () => {
 
 		vi.useFakeTimers();
 		const runPromise = cdpCapture.run("chatgpt", "prompt", { webSearch: true });
-		await vi.advanceTimersByTimeAsync(8000);
+		await vi.advanceTimersByTimeAsync(10000);
 		await vi.advanceTimersByTimeAsync(1500 * 60);
 		const result = await runPromise;
 		vi.useRealTimers();

@@ -88,7 +88,14 @@ function resolveRunPlans(args: {
 	entitlementsByOrg: Awaited<ReturnType<typeof getOrgEntitlementsMap>>;
 }): Map<string, PromptRunPlan> {
 	const planByPromptId = new Map<string, PromptRunPlan>();
-	const scrapeTargets = parseScrapeTargets(process.env.SCRAPE_TARGETS);
+	let scrapeTargets = parseScrapeTargets(process.env.SCRAPE_TARGETS);
+
+	const enableCdpCapture =
+		process.env.ENABLE_SCHEDULED_CDP_CAPTURE === "1" ||
+		process.env.ENABLE_SCHEDULED_CDP_CAPTURE?.toLowerCase() === "true";
+	if (!enableCdpCapture) {
+		scrapeTargets = scrapeTargets.filter((config) => config.provider !== "cdp-capture");
+	}
 	const defaultDelayHours = getDefaultDelayHours();
 
 	for (const [brandId, brandPrompts] of args.promptsByBrand) {

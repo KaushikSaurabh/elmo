@@ -154,6 +154,13 @@ export const ENV_REGISTRY: EnvVarSpec[] = [
 		description: "Mistral API key.",
 	},
 	{
+		name: "ENABLE_SCHEDULED_CDP_CAPTURE",
+		scope: "server",
+		requiredBy: "optional",
+		description:
+			"If set to 1 or true, enables the scheduled execution of cdp-capture targets in the worker. Leaving this unset disables cdp-capture from running automatically on the background cadence, as it consumes real persistent Chrome session compute on the host.",
+	},
+	{
 		name: "SCRAPE_TARGETS",
 		scope: "server",
 		requiredBy: VALIDATED_MODES,

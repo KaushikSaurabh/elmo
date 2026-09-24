@@ -321,6 +321,23 @@ export const cdpCapture: Provider = {
 			const page = await getActivePage(browser);
 			await page.goto(targetUrl);
 
+			// Wait briefly to allow any auth redirect to start
+			await page.waitForTimeout(2000);
+			const currentUrl = page.url();
+			if (
+				currentUrl.includes("/auth/login") ||
+				currentUrl.includes("/login") ||
+				(await page
+					.locator('button:has-text("Log in"), button:has-text("Sign in"), a:has-text("Log in"), a:has-text("Sign in")')
+					.isVisible({ timeout: 500 })
+					.catch(() => false))
+			) {
+				// The site redirects to or shows a login/sign-in page instead of the expected chat UI.
+				throw new Error(
+					`LOGIN_REQUIRED: Platform ${model} needs you to log in again. Please follow the CDP login runbook to authenticate.`,
+				);
+			}
+
 			await dismissPopups(page);
 			await hideSidebar(page, model);
 			await typePrompt(page, model, prompt);

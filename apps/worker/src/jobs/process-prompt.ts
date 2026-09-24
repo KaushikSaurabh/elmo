@@ -491,7 +491,14 @@ async function processPrompt(
  * on a backoff when nothing did.
  */
 export async function processPromptJob(jobs: Job<ProcessPromptData>[]): Promise<void> {
-	const scrapeConfigs = parseScrapeTargets(process.env.SCRAPE_TARGETS);
+	let scrapeConfigs = parseScrapeTargets(process.env.SCRAPE_TARGETS);
+
+	const enableCdpCapture =
+		process.env.ENABLE_SCHEDULED_CDP_CAPTURE === "1" ||
+		process.env.ENABLE_SCHEDULED_CDP_CAPTURE?.toLowerCase() === "true";
+	if (!enableCdpCapture) {
+		scrapeConfigs = scrapeConfigs.filter((config) => config.provider !== "cdp-capture");
+	}
 
 	// pg-boss v12 passes an array of jobs - process each one
 	for (const job of jobs) {
