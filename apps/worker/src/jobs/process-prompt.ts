@@ -358,7 +358,10 @@ async function runModelIteration({
 					screenshotUrl: blob.url,
 					dataUrl: dataBlob.url,
 				};
-				console.log(`${logPrefix} Uploaded screenshot to ${blob.url} and data to ${dataBlob.url}`);
+				// Blob URLs are the access control (public, unguessable path) — never log
+				// them, since that hands out the URL to a wider audience (Sentry,
+				// platform log aggregators) than the blob token itself has.
+				console.log(`${logPrefix} Uploaded screenshot and data to Blob storage`);
 			} catch (uploadError) {
 				console.error(`${logPrefix} Failed to upload screenshot and data to Blob storage`, uploadError);
 			}
