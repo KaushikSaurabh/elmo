@@ -38,7 +38,15 @@ const CHROME_SELECTORS: Record<string, string> = {
 	chatgpt: '#stage-slideover-sidebar, header, #stage-header, [data-testid="profile-button"], [aria-label="Profile"]',
 	claude: 'aside[aria-label="Sidebar"], .dframe-header, header, [aria-label="User menu"], [aria-label="Account menu"]',
 	perplexity: 'nav[aria-label="Main"], header, [aria-label="User menu"], [aria-label="Account settings"]',
-	"google-ai-mode": '#gb, #ogb, #appbar, #top_nav, header, [aria-label*="Google Account"]',
+	// [jsname="oEQ3x"] is the real container for the "Upgrade" plan badge -
+	// verified live: `header`/`#gb`/`#ogb` do NOT actually contain it despite
+	// visually overlapping it, confirmed by walking the DOM ancestor chain.
+	// `jsname` is Google's own internal closure-compiled hook, more stable
+	// than their rotated CSS class names but still not a guarantee - re-verify
+	// live if this site's markup changes. .qEn1od is the left icon sidebar,
+	// same caveat.
+	"google-ai-mode":
+		'#gb, #ogb, #appbar, #top_nav, header, [jsname="oEQ3x"], .qEn1od, [aria-label="Settings"], [aria-label="Settings for AI mode history"], [aria-label*="Google Account"]',
 };
 
 async function hideChrome(page: Page, model: string): Promise<void> {
